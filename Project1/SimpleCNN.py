@@ -54,23 +54,32 @@ class Net(nn.Module):
 
 
 def train_model():
+    # 使用GPU加速
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(device)
     # Hyper-parameters(超参数)
-    batch_size = 64
+    batch_size = 256
     # 验证集比例
     valid_size = 0.2
     num_epochs = 20
     # 进程数
-    num_workers = 4
+    num_workers = 0
 
     # Data transformation with augmentation
+    # 数据预处理
     transform = transforms.Compose([
+        # 将图像转为数值
+        # [0,255] → [0,1]
         transforms.ToTensor(),
+        # [0,1] → [-1,1]
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
+    # 数据集加载
     full_train_data = torchvision.datasets.CIFAR10('data', train=True, download=True, transform=transform)
     test_data = torchvision.datasets.CIFAR10('data', train=False, download=True, transform=transform)
 
+    # 分割训练集和验证集
     num_train = len(full_train_data)
     # store the test_dataset size as 20% of the total dataset
     split = int(np.floor(valid_size * num_train))
@@ -79,18 +88,22 @@ def train_model():
     train_data, valid_data = random_split(full_train_data, [train_size, split])
 
     # train the model using 80% of the dataset
-    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True, num_workers=num_workers)
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=True,
+                              num_workers=num_workers, pin_memory=True)
     # validate the working a validation dataset which contains 20% of the dataset
-    valid_loader = DataLoader(valid_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    valid_loader = DataLoader(valid_data, batch_size=batch_size, shuffle=False,
+                              num_workers=num_workers, pin_memory=True)
     # run the test using the entire dataset
-    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_workers)
+    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False,
+                             num_workers=num_workers)
 
     classes = ['plane', 'vehicle', 'bird', 'cat', 'deer', 'dog', 'frog', 'horse', 'ship', 'truck']
 
-    net = Net()
+    net = Net().to(device)
 
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.Adam(net.parameters(), lr=0.001)
+    # optimizer = optim.Adam(net.parameters(), lr=0.001)
+    optimizer = optim.SGD(net.parameters(), lr=0.03)
     # scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.7)
 
     valid_loss_min = np.Inf
@@ -103,11 +116,16 @@ def train_model():
         # Training
         net.train()
         for data, target in train_loader:
-            data, target = data, target
+            data, target = data.to(device), target.to(device)
+            # 清梯度
             optimizer.zero_grad()
+            # 前向传播
             output = net(data)
+            # 计算损失
             loss = criterion(output, target)
+            # 反向传播
             loss.backward()
+            # 更新参数
             optimizer.step()
             train_loss += loss.item() * data.size(0)
 
@@ -115,7 +133,7 @@ def train_model():
         net.eval()
         with torch.no_grad():
             for data, target in valid_loader:
-                data, target = data, target
+                data, target = data.to(device), target.to(device)
                 output = net(data)
                 loss = criterion(output, target)
                 valid_loss += loss.item() * data.size(0)
@@ -128,12 +146,16 @@ def train_model():
         epoch_time = end_time - start_time
 
         print(
-            f'Epoch: {epoch + 1}/{num_epochs} | Time: {epoch_time:.3f}s | Training Loss: {train_loss:.4f} | Validation Loss: {valid_loss:.4f}')
+            f'Epoch: {epoch + 1}/{num_epochs} '
+            f'| Time: {epoch_time:.3f}s '
+            f'| Training Loss: {train_loss:.4f} '
+            f'| Validation Loss: {valid_loss:.4f}')
 
         # Save model if validation loss decreases
         if valid_loss <= valid_loss_min:
             print(
-                f'Validation loss decreased ({valid_loss_min:.4f} --> {valid_loss:.4f}). Saving model as net_cifar10.pt')
+                f'Validation loss decreased ({valid_loss_min:.4f} --> {valid_loss:.4f}). '
+                f'Saving model as net_cifar10.pt')
             torch.save(net.state_dict(), 'net_cifar10.pt')
             valid_loss_min = valid_loss
 
@@ -148,7 +170,7 @@ def train_model():
     net.eval()
     with torch.no_grad():
         for data, target in test_loader:
-            data, target = data, target
+            data, target = data.to(device), target.to(device)
             output = net(data)
             loss = criterion(output, target)
             test_loss += loss.item() * data.size(0)
